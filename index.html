@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="人生OS">
-  <title>人生OS 週次レビュー</title>
+  <title>人生OS 日次レビュー</title>
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
@@ -26,37 +26,33 @@
   <main class="app-shell">
     <header class="hero card">
       <p class="eyebrow">Life Operating System</p>
-      <h1>人生OS 週次レビュー</h1>
-      <p class="subtitle">業務標準化・家族・健康・資産・英語を、毎週1ページで統合管理するアプリです。</p>
+      <h1>人生OS 日次レビュー</h1>
+      <p class="subtitle">毎日1回の入力で、週次の進捗と月次サマリーを自動で作るアプリです。</p>
     </header>
 
     <section class="dashboard card">
-      <h2>今月ダッシュボード</h2>
+      <h2>今週ダッシュボード</h2>
       <div id="dashboardCards" class="card-grid"></div>
     </section>
 
     <section class="card">
       <div class="section-head">
-        <h2>週次レビュー入力</h2>
+        <h2>日次レビュー入力</h2>
         <button id="resetFormButton" class="btn btn-ghost" type="button">新規入力に戻す</button>
       </div>
 
-      <form id="weeklyForm" novalidate>
-        <input id="reviewId" name="reviewId" type="hidden">
+      <form id="dailyForm" novalidate>
+        <input id="entryId" name="entryId" type="hidden">
 
-        <div class="grid two">
+        <div class="grid one">
           <label>
-            週開始日
-            <input id="weekStart" name="weekStart" type="date" required>
-          </label>
-          <label>
-            週終了日
-            <input id="weekEnd" name="weekEnd" type="date" required>
+            日付
+            <input id="entryDate" name="entryDate" type="date" required>
           </label>
         </div>
 
         <fieldset>
-          <legend>今週の最重要3タスク</legend>
+          <legend>今日の最重要3タスク</legend>
           <div class="grid one">
             <label>タスク1 <input id="task1" name="task1" type="text"></label>
             <label>タスク2 <input id="task2" name="task2" type="text"></label>
@@ -72,22 +68,22 @@
               <input id="achievedCount" name="achievedCount" type="number" min="0" max="3" step="1">
             </label>
             <label class="wide-2">
-              達成できた理由
+              進んだ理由
               <input id="achievedReason" name="achievedReason" type="text">
             </label>
           </div>
           <label>
-            未達の原因
+            詰まった原因
             <input id="missedReason" name="missedReason" type="text">
           </label>
         </fieldset>
 
         <fieldset>
-          <legend>KPI</legend>
+          <legend>日次KPI</legend>
           <div class="grid three">
             <label>業務標準化件数 <input id="standardizationCount" name="standardizationCount" type="number" min="0" step="1"></label>
-            <label>家族時間（h/週） <input id="familyHours" name="familyHours" type="number" min="0" step="0.5"></label>
-            <label>睡眠平均（h/日） <input id="sleepAvg" name="sleepAvg" type="number" min="0" step="0.1"></label>
+            <label>家族時間（分/日） <input id="familyMinutes" name="familyMinutes" type="number" min="0" step="5"></label>
+            <label>睡眠（h/日） <input id="sleepHours" name="sleepHours" type="number" min="0" step="0.1"></label>
             <label>体重（kg） <input id="weight" name="weight" type="number" min="0" step="0.1"></label>
             <label>
               資産確認
@@ -95,14 +91,22 @@
                 <option value="">未選択</option>
                 <option value="実施">実施</option>
                 <option value="未実施">未実施</option>
+                <option value="対象外">対象外</option>
               </select>
             </label>
-            <label>英語学習日数 <input id="englishDays" name="englishDays" type="number" min="0" max="7" step="1"></label>
+            <label>
+              英語学習
+              <select id="englishDone" name="englishDone">
+                <option value="">未選択</option>
+                <option value="実施">実施</option>
+                <option value="未実施">未実施</option>
+              </select>
+            </label>
           </div>
         </fieldset>
 
         <fieldset>
-          <legend>週の採点（100点満点）</legend>
+          <legend>今日の採点（100点満点）</legend>
           <div class="grid four">
             <label>仕事 <input id="scoreWork" name="scoreWork" type="number" min="0" max="100" step="1"></label>
             <label>生活 <input id="scoreLife" name="scoreLife" type="number" min="0" max="100" step="1"></label>
@@ -118,7 +122,7 @@
             <label>良かったこと2 <input id="good2" name="good2" type="text"></label>
             <label>良かったこと3 <input id="good3" name="good3" type="text"></label>
             <label>改善1つ <input id="improvement" name="improvement" type="text"></label>
-            <label>来週の布石（5分行動） <input id="seedAction" name="seedAction" type="text"></label>
+            <label>明日の布石（5分行動） <input id="seedAction" name="seedAction" type="text"></label>
           </div>
         </fieldset>
 
@@ -132,14 +136,14 @@
 
     <section class="card">
       <div class="section-head">
-        <h2>保存済みレビュー</h2>
+        <h2>保存済み日次レビュー</h2>
         <button id="exportButton" class="btn btn-ghost" type="button">JSONエクスポート</button>
       </div>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>対象週</th>
+              <th>日付</th>
               <th>達成</th>
               <th>標準化</th>
               <th>英語</th>
@@ -168,7 +172,7 @@
       <h2>ChatGPT連携</h2>
       <p class="small">保存データをもとに分析依頼文を自動生成します。</p>
       <div class="actions">
-        <button id="copyWeeklyPromptButton" class="btn btn-ghost" type="button">週次分析プロンプトをコピー</button>
+        <button id="copyDailyPromptButton" class="btn btn-ghost" type="button">日次分析プロンプトをコピー</button>
         <button id="copyMonthlyPromptButton" class="btn btn-ghost" type="button">月末分析プロンプトをコピー</button>
       </div>
       <pre id="promptPreview" class="prompt-preview">ここに生成プレビューが表示されます。</pre>

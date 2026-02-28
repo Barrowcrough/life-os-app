@@ -1,7 +1,7 @@
 {
-  "name": "人生OS 週次レビュー",
+  "name": "人生OS 日次レビュー",
   "short_name": "人生OS",
-  "description": "業務標準化・家族・健康・資産・英語を週次で統合管理するアプリ",
+  "description": "業務標準化・家族・健康・資産・英語を日次入力で統合管理するアプリ",
   "lang": "ja",
   "start_url": "./index.html",
   "scope": "./",

@@ -1,15 +1,15 @@
 "use strict";
 
-const STORAGE_KEY = "life_os_weekly_reviews_v1";
+const STORAGE_KEY = "life_os_daily_reviews_v1";
 const GOALS = {
-  standardization: 2,
-  familyHours: 8,
-  sleepAvg: 6.5,
-  englishDays: 5
+  standardizationPerWeek: 2,
+  englishDaysPerWeek: 5,
+  sleepHoursPerDay: 6.5,
+  familyMinutesPerDay: 60
 };
 
-const form = document.getElementById("weeklyForm");
-const reviewIdInput = document.getElementById("reviewId");
+const form = document.getElementById("dailyForm");
+const entryIdInput = document.getElementById("entryId");
 const recordsBody = document.getElementById("recordsBody");
 const summaryMonthInput = document.getElementById("summaryMonth");
 const summaryOutput = document.getElementById("summaryOutput");
@@ -20,13 +20,9 @@ const toast = document.getElementById("toast");
 const clearButton = document.getElementById("clearButton");
 const fillSampleButton = document.getElementById("fillSampleButton");
 const resetFormButton = document.getElementById("resetFormButton");
-const copyWeeklyPromptButton = document.getElementById("copyWeeklyPromptButton");
+const copyDailyPromptButton = document.getElementById("copyDailyPromptButton");
 const copyMonthlyPromptButton = document.getElementById("copyMonthlyPromptButton");
 const exportButton = document.getElementById("exportButton");
-
-let entries = [];
-let editingId = null;
-let latestSummaryText = "";
 
 const TEXT_FIELDS = [
   "task1",
@@ -44,21 +40,25 @@ const TEXT_FIELDS = [
 const NUMBER_FIELDS = [
   "achievedCount",
   "standardizationCount",
-  "familyHours",
-  "sleepAvg",
+  "familyMinutes",
+  "sleepHours",
   "weight",
-  "englishDays",
   "scoreWork",
   "scoreLife",
   "scoreConsistency",
   "scoreTotal"
 ];
 
+let entries = [];
+let editingId = null;
+let latestSummaryText = "";
+
+function pad2(num) {
+  return String(num).padStart(2, "0");
+}
+
 function toISODate(date) {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 }
 
 function fromISODate(isoDate) {
@@ -80,13 +80,9 @@ function getMonday(date) {
 }
 
 function parseNumber(value) {
-  if (value === null || value === undefined || value === "") return null;
+  if (value === "" || value === null || value === undefined) return null;
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
-}
-
-function formatValue(value, suffix = "") {
-  return value === null || value === undefined || Number.isNaN(value) ? "-" : `${value}${suffix}`;
 }
 
 function escapeHtml(value) {
@@ -96,6 +92,16 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function formatValue(value, suffix = "") {
+  return value === null || value === undefined || Number.isNaN(value) ? "-" : `${value}${suffix}`;
+}
+
+function average(numbers) {
+  if (!numbers.length) return null;
+  const sum = numbers.reduce((acc, cur) => acc + cur, 0);
+  return sum / numbers.length;
 }
 
 function showToast(message) {
@@ -119,96 +125,101 @@ function saveEntries() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
 }
 
-function ensureDefaultWeekRange() {
-  if (form.weekStart.value && form.weekEnd.value) return;
-  const today = new Date();
-  const monday = getMonday(today);
-  const sunday = addDays(monday, 6);
-  form.weekStart.value = toISODate(monday);
-  form.weekEnd.value = toISODate(sunday);
+function ensureDefaultDate() {
+  if (form.entryDate.value) return;
+  form.entryDate.value = toISODate(new Date());
 }
 
 function setDefaultMonthIfEmpty() {
   if (summaryMonthInput.value) return;
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  summaryMonthInput.value = `${now.getFullYear()}-${month}`;
+  const today = new Date();
+  summaryMonthInput.value = `${today.getFullYear()}-${pad2(today.getMonth() + 1)}`;
 }
 
-function resetForm(keepDates = true) {
-  const savedWeekStart = form.weekStart.value;
-  const savedWeekEnd = form.weekEnd.value;
+function resetForm(keepDate = true) {
+  const savedDate = form.entryDate.value;
   form.reset();
-  reviewIdInput.value = "";
   editingId = null;
-  if (keepDates && savedWeekStart && savedWeekEnd) {
-    form.weekStart.value = savedWeekStart;
-    form.weekEnd.value = savedWeekEnd;
+  entryIdInput.value = "";
+  if (keepDate && savedDate) {
+    form.entryDate.value = savedDate;
   } else {
-    ensureDefaultWeekRange();
+    ensureDefaultDate();
   }
 }
 
 function collectFormData() {
-  const review = {
-    id: reviewIdInput.value || String(Date.now()),
-    weekStart: form.weekStart.value,
-    weekEnd: form.weekEnd.value,
+  const item = {
+    id: entryIdInput.value || String(Date.now()),
+    entryDate: form.entryDate.value,
     assetCheck: form.assetCheck.value || "",
+    englishDone: form.englishDone.value || "",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
 
   for (const key of TEXT_FIELDS) {
-    review[key] = (form[key].value || "").trim();
+    item[key] = (form[key].value || "").trim();
   }
-
   for (const key of NUMBER_FIELDS) {
-    review[key] = parseNumber(form[key].value);
+    item[key] = parseNumber(form[key].value);
   }
 
-  return review;
+  return item;
 }
 
-function fillForm(review) {
-  editingId = review.id;
-  reviewIdInput.value = review.id;
-  form.weekStart.value = review.weekStart || "";
-  form.weekEnd.value = review.weekEnd || "";
-  form.assetCheck.value = review.assetCheck || "";
+function fillForm(item) {
+  editingId = item.id;
+  entryIdInput.value = item.id;
+  form.entryDate.value = item.entryDate || "";
+  form.assetCheck.value = item.assetCheck || "";
+  form.englishDone.value = item.englishDone || "";
 
   for (const key of TEXT_FIELDS) {
-    form[key].value = review[key] || "";
+    form[key].value = item[key] || "";
   }
   for (const key of NUMBER_FIELDS) {
-    form[key].value = review[key] ?? "";
+    form[key].value = item[key] ?? "";
   }
+}
+
+function sortEntries() {
+  entries.sort((a, b) => {
+    if (a.entryDate === b.entryDate) return a.id.localeCompare(b.id);
+    return a.entryDate < b.entryDate ? -1 : 1;
+  });
+}
+
+function getEntryById(id) {
+  return entries.find((item) => item.id === id) || null;
 }
 
 function handleSubmit(event) {
   event.preventDefault();
-  const review = collectFormData();
-  if (!review.weekStart || !review.weekEnd) {
-    showToast("週開始日と週終了日を入力してください。");
+  const item = collectFormData();
+  if (!item.entryDate) {
+    showToast("日付を入力してください。");
     return;
   }
 
-  if (review.weekStart > review.weekEnd) {
-    showToast("週開始日が週終了日より後になっています。");
-    return;
+  const duplicate = entries.find((entry) => entry.entryDate === item.entryDate && entry.id !== item.id);
+  if (duplicate) {
+    const ok = window.confirm("この日付の入力は既にあります。上書きしますか？");
+    if (!ok) return;
+    item.id = duplicate.id;
   }
 
-  const existingIdx = entries.findIndex((item) => item.id === review.id);
-  if (existingIdx >= 0) {
-    review.createdAt = entries[existingIdx].createdAt || review.createdAt;
-    entries[existingIdx] = review;
-    showToast("レビューを更新しました。");
+  const idx = entries.findIndex((entry) => entry.id === item.id);
+  if (idx >= 0) {
+    item.createdAt = entries[idx].createdAt || item.createdAt;
+    entries[idx] = item;
+    showToast("日次レビューを更新しました。");
   } else {
-    entries.push(review);
-    showToast("レビューを保存しました。");
+    entries.push(item);
+    showToast("日次レビューを保存しました。");
   }
 
-  entries.sort((a, b) => (a.weekStart < b.weekStart ? -1 : 1));
+  sortEntries();
   saveEntries();
   resetForm(false);
   renderAll();
@@ -216,20 +227,21 @@ function handleSubmit(event) {
 
 function renderRecords() {
   if (!entries.length) {
-    recordsBody.innerHTML = '<tr><td colspan="7">まだレビューがありません。</td></tr>';
+    recordsBody.innerHTML = '<tr><td colspan="7">まだ日次レビューがありません。</td></tr>';
     return;
   }
 
   const rows = [...entries]
-    .sort((a, b) => (a.weekStart > b.weekStart ? -1 : 1))
+    .sort((a, b) => (a.entryDate > b.entryDate ? -1 : 1))
     .map((item) => {
-      const assetClass = item.assetCheck === "実施" ? "ok" : "ng";
+      const assetClass = item.assetCheck === "実施" ? "ok" : item.assetCheck === "対象外" ? "" : "ng";
+      const englishClass = item.englishDone === "実施" ? "ok" : "ng";
       return `
         <tr>
-          <td>${escapeHtml(item.weekStart)} 〜 ${escapeHtml(item.weekEnd)}</td>
+          <td>${escapeHtml(item.entryDate)}</td>
           <td>${formatValue(item.achievedCount, "/3")}</td>
           <td>${formatValue(item.standardizationCount)}</td>
-          <td>${formatValue(item.englishDays, "日")}</td>
+          <td><span class="chip ${englishClass}">${escapeHtml(item.englishDone || "-")}</span></td>
           <td>${formatValue(item.scoreTotal)}</td>
           <td><span class="chip ${assetClass}">${escapeHtml(item.assetCheck || "-")}</span></td>
           <td>
@@ -243,62 +255,44 @@ function renderRecords() {
   recordsBody.innerHTML = rows;
 }
 
-function getMonthWindow(monthValue) {
+function getMonthRange(monthValue) {
   const [year, month] = monthValue.split("-").map(Number);
   const start = new Date(year, month - 1, 1);
   const end = new Date(year, month, 0);
   return { start, end };
 }
 
-function entryOverlapsMonth(entry, monthValue) {
-  if (!entry.weekStart) return false;
-  const { start, end } = getMonthWindow(monthValue);
-  const weekStart = fromISODate(entry.weekStart);
-  const weekEnd = fromISODate(entry.weekEnd || entry.weekStart);
-  if (!weekStart || !weekEnd) return false;
-  return weekStart <= end && weekEnd >= start;
-}
-
 function getEntriesInMonth(monthValue) {
   return entries
-    .filter((entry) => entryOverlapsMonth(entry, monthValue))
-    .sort((a, b) => (a.weekStart < b.weekStart ? -1 : 1));
+    .filter((item) => {
+      if (!item.entryDate) return false;
+      return item.entryDate.startsWith(monthValue);
+    })
+    .sort((a, b) => (a.entryDate < b.entryDate ? -1 : 1));
 }
 
-function getWeekKey(date) {
-  const monday = getMonday(date);
-  return toISODate(monday);
-}
-
-function getExpectedWeeklyCount(monthValue) {
-  const { start, end } = getMonthWindow(monthValue);
-  const cursor = new Date(start);
-  const keys = new Set();
-  while (cursor <= end) {
-    keys.add(getWeekKey(cursor));
-    cursor.setDate(cursor.getDate() + 1);
-  }
-  return keys.size;
-}
-
-function average(numbers) {
-  if (!numbers.length) return null;
-  const sum = numbers.reduce((acc, cur) => acc + cur, 0);
-  return sum / numbers.length;
+function getExpectedDaysInMonth(monthValue) {
+  const { start, end } = getMonthRange(monthValue);
+  const today = new Date();
+  const isCurrentMonth = start.getFullYear() === today.getFullYear() && start.getMonth() === today.getMonth();
+  if (isCurrentMonth) return today.getDate();
+  return end.getDate();
 }
 
 function summarizeMonth(monthValue) {
   const monthEntries = getEntriesInMonth(monthValue);
-  const expected = getExpectedWeeklyCount(monthValue);
+  const expectedDays = getExpectedDaysInMonth(monthValue);
 
-  const familyValues = monthEntries.map((e) => e.familyHours).filter((v) => v !== null);
-  const sleepValues = monthEntries.map((e) => e.sleepAvg).filter((v) => v !== null);
-  const englishValues = monthEntries.map((e) => e.englishDays).filter((v) => v !== null);
-  const totalScores = monthEntries.map((e) => e.scoreTotal).filter((v) => v !== null);
-
+  const achievedValues = monthEntries.map((e) => e.achievedCount).filter((v) => v !== null);
   const standardizationSum = monthEntries.reduce((acc, e) => acc + (e.standardizationCount || 0), 0);
-  const assetChecked = monthEntries.filter((e) => e.assetCheck === "実施").length;
-  const assetRate = monthEntries.length ? Math.round((assetChecked / monthEntries.length) * 100) : null;
+  const familySumMinutes = monthEntries.reduce((acc, e) => acc + (e.familyMinutes || 0), 0);
+  const sleepValues = monthEntries.map((e) => e.sleepHours).filter((v) => v !== null);
+  const scoreValues = monthEntries.map((e) => e.scoreTotal).filter((v) => v !== null);
+  const englishDoneCount = monthEntries.filter((e) => e.englishDone === "実施").length;
+
+  const assetApplicable = monthEntries.filter((e) => e.assetCheck === "実施" || e.assetCheck === "未実施");
+  const assetCheckedCount = assetApplicable.filter((e) => e.assetCheck === "実施").length;
+  const assetRate = assetApplicable.length ? Math.round((assetCheckedCount / assetApplicable.length) * 100) : null;
 
   const withWeight = monthEntries.filter((e) => e.weight !== null);
   let weightChange = null;
@@ -306,17 +300,24 @@ function summarizeMonth(monthValue) {
     weightChange = Number((withWeight[withWeight.length - 1].weight - withWeight[0].weight).toFixed(1));
   }
 
+  let achievedRate = null;
+  if (achievedValues.length) {
+    const achievedSum = achievedValues.reduce((acc, cur) => acc + cur, 0);
+    achievedRate = Math.round((achievedSum / (achievedValues.length * 3)) * 100);
+  }
+
   return {
     monthValue,
-    expectedWeeklyCount: expected,
+    expectedDays,
     reviewCount: monthEntries.length,
     standardizationSum,
-    familyAvg: average(familyValues),
+    familySumMinutes,
     sleepAvg: average(sleepValues),
-    englishAvg: average(englishValues),
-    totalScoreAvg: average(totalScores),
+    scoreAvg: average(scoreValues),
+    englishDoneCount,
     assetRate,
-    weightChange
+    weightChange,
+    achievedRate
   };
 }
 
@@ -336,32 +337,36 @@ function renderSummary() {
     return;
   }
 
-  const familyAvg = s.familyAvg !== null ? s.familyAvg.toFixed(1) : "-";
-  const sleepAvg = s.sleepAvg !== null ? s.sleepAvg.toFixed(1) : "-";
-  const englishAvg = s.englishAvg !== null ? s.englishAvg.toFixed(1) : "-";
-  const scoreAvg = s.totalScoreAvg !== null ? s.totalScoreAvg.toFixed(1) : "-";
+  const familyTotalHours = (s.familySumMinutes / 60).toFixed(1);
+  const familyAvgMinutes = (s.familySumMinutes / s.reviewCount).toFixed(0);
+  const sleepAvgText = s.sleepAvg === null ? "-" : s.sleepAvg.toFixed(1);
+  const scoreAvgText = s.scoreAvg === null ? "-" : s.scoreAvg.toFixed(1);
   const weightDelta = s.weightChange === null ? "-" : `${s.weightChange > 0 ? "+" : ""}${s.weightChange}kg`;
 
   summaryOutput.innerHTML = [
-    `<p><strong>対象レビュー数:</strong> ${s.reviewCount} / ${s.expectedWeeklyCount}週</p>`,
+    `<p><strong>入力日数:</strong> ${s.reviewCount} / ${s.expectedDays}日</p>`,
+    `<p><strong>タスク達成率:</strong> ${s.achievedRate ?? "-"}%</p>`,
     `<p><strong>業務標準化 合計:</strong> ${s.standardizationSum}件</p>`,
-    `<p><strong>家族時間 平均:</strong> ${familyAvg}h/週</p>`,
-    `<p><strong>睡眠 平均:</strong> ${sleepAvg}h/日</p>`,
-    `<p><strong>英語学習 平均:</strong> ${englishAvg}日/週</p>`,
+    `<p><strong>家族時間 合計:</strong> ${familyTotalHours}h（平均 ${familyAvgMinutes}分/日）</p>`,
+    `<p><strong>睡眠 平均:</strong> ${sleepAvgText}h/日</p>`,
+    `<p><strong>英語実施日数:</strong> ${s.englishDoneCount}日</p>`,
     `<p><strong>資産確認 実施率:</strong> ${s.assetRate ?? "-"}%</p>`,
-    `<p><strong>総合点 平均:</strong> ${scoreAvg}</p>`,
+    `<p><strong>総合点 平均:</strong> ${scoreAvgText}</p>`,
     `<p><strong>体重 月間増減:</strong> ${weightDelta}</p>`
   ].join("");
 
   latestSummaryText = [
     `【月末サマリー】${monthLabel(monthValue)}`,
-    `- 週次レビュー実施回数: ${s.reviewCount}/${s.expectedWeeklyCount}`,
+    `- 入力日数: ${s.reviewCount}/${s.expectedDays}`,
+    `- タスク達成率: ${s.achievedRate ?? "-"}%`,
     `- 業務標準化 合計件数: ${s.standardizationSum}`,
-    `- 家族時間 平均（h/週）: ${familyAvg}`,
-    `- 睡眠 平均（h/日）: ${sleepAvg}`,
-    `- 体重の月間増減: ${weightDelta}`,
+    `- 家族時間 合計（h）: ${familyTotalHours}`,
+    `- 家族時間 平均（分/日）: ${familyAvgMinutes}`,
+    `- 睡眠 平均（h/日）: ${sleepAvgText}`,
+    `- 英語実施日数: ${s.englishDoneCount}`,
     `- 資産確認 実施率: ${s.assetRate ?? "-"}%`,
-    `- 英語学習 平均（日/週）: ${englishAvg}`,
+    `- 総合点 平均: ${scoreAvgText}`,
+    `- 体重の月間増減: ${weightDelta}`,
     "",
     "■ 今月の結論",
     "- 継続できた仕組み:",
@@ -370,95 +375,98 @@ function renderSummary() {
   ].join("\n");
 }
 
+function getEntriesInCurrentWeek() {
+  const today = new Date();
+  const monday = getMonday(today);
+  const sunday = addDays(monday, 6);
+  const startIso = toISODate(monday);
+  const endIso = toISODate(sunday);
+
+  return entries
+    .filter((item) => item.entryDate >= startIso && item.entryDate <= endIso)
+    .sort((a, b) => (a.entryDate < b.entryDate ? -1 : 1));
+}
+
 function renderDashboard() {
-  const now = new Date();
-  const monthValue = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  const s = summarizeMonth(monthValue);
-  const stdTarget = s.expectedWeeklyCount * GOALS.standardization;
+  const weekEntries = getEntriesInCurrentWeek();
+  const inputDays = weekEntries.length;
+  const standardizationSum = weekEntries.reduce((acc, e) => acc + (e.standardizationCount || 0), 0);
+  const englishDoneCount = weekEntries.filter((e) => e.englishDone === "実施").length;
+  const familySumMinutes = weekEntries.reduce((acc, e) => acc + (e.familyMinutes || 0), 0);
+  const sleepAvg = average(weekEntries.map((e) => e.sleepHours).filter((v) => v !== null));
+
+  let achievedRate = null;
+  const achievedValues = weekEntries.map((e) => e.achievedCount).filter((v) => v !== null);
+  if (achievedValues.length) {
+    achievedRate = Math.round((achievedValues.reduce((acc, cur) => acc + cur, 0) / (achievedValues.length * 3)) * 100);
+  }
 
   const items = [
-    {
-      label: "週次レビュー",
-      value: `${s.reviewCount}/${s.expectedWeeklyCount}週`
-    },
-    {
-      label: "標準化進捗",
-      value: `${s.standardizationSum}/${stdTarget}件`
-    },
-    {
-      label: "家族時間平均",
-      value: `${s.familyAvg === null ? "-" : s.familyAvg.toFixed(1)}h (目標${GOALS.familyHours})`
-    },
+    { label: "日次入力", value: `${inputDays}/7日` },
+    { label: "タスク達成率", value: `${achievedRate ?? "-"}%` },
+    { label: "標準化進捗", value: `${standardizationSum}/${GOALS.standardizationPerWeek}件` },
+    { label: "英語実施", value: `${englishDoneCount}/${GOALS.englishDaysPerWeek}日` },
+    { label: "家族時間", value: `${(familySumMinutes / 60).toFixed(1)}h/週` },
     {
       label: "睡眠平均",
-      value: `${s.sleepAvg === null ? "-" : s.sleepAvg.toFixed(1)}h (目標${GOALS.sleepAvg})`
-    },
-    {
-      label: "英語平均",
-      value: `${s.englishAvg === null ? "-" : s.englishAvg.toFixed(1)}日 (目標${GOALS.englishDays})`
-    },
-    {
-      label: "資産確認率",
-      value: `${s.assetRate === null ? "-" : `${s.assetRate}%`}`
+      value: `${sleepAvg === null ? "-" : sleepAvg.toFixed(1)}h (目標${GOALS.sleepHoursPerDay})`
     }
   ];
 
   dashboardCards.innerHTML = items
-    .map((item) => {
-      return `<div class="metric"><div class="label">${escapeHtml(item.label)}</div><div class="value">${escapeHtml(item.value)}</div></div>`;
-    })
+    .map((item) => `<div class="metric"><div class="label">${escapeHtml(item.label)}</div><div class="value">${escapeHtml(item.value)}</div></div>`)
     .join("");
 }
 
-function buildWeeklyPrompt(entry) {
-  const goods = [entry.good1, entry.good2, entry.good3].filter(Boolean);
+function buildDailyPrompt(item) {
+  const goods = [item.good1, item.good2, item.good3].filter(Boolean);
   const goodLines = goods.length ? goods.map((line, idx) => `${idx + 1}. ${line}`).join("\n") : "1.\n2.\n3.";
 
   return [
-    "【週次レビュー分析依頼（ChatGPT用）】",
+    "【日次レビュー分析依頼（ChatGPT用）】",
     "",
-    "次の週次データを評価してください。",
-    "1. 未達の根本原因を1つに特定",
-    "2. 来週の最重要3タスクを提案（優先順）",
+    "次のデータを評価してください。",
+    "1. 今日の詰まりの根本原因を1つに特定",
+    "2. 明日の最重要3タスクを提案（優先順）",
     "3. KPI改善のための具体策を3つ提案",
     "4. 上司報告用の一言を40字以内で作成",
     "",
     "--- 入力データ ---",
-    `対象週: ${entry.weekStart}〜${entry.weekEnd}`,
-    "■ 今週の最重要3タスク",
-    `1. ${entry.task1 || ""}`,
-    `2. ${entry.task2 || ""}`,
-    `3. ${entry.task3 || ""}`,
+    `日付: ${item.entryDate}`,
+    "■ 今日の最重要3タスク",
+    `1. ${item.task1 || ""}`,
+    `2. ${item.task2 || ""}`,
+    `3. ${item.task3 || ""}`,
     "",
     "■ 実行結果",
-    `- タスク達成数（/3）: ${formatValue(entry.achievedCount)}`,
-    `- 達成できた理由: ${entry.achievedReason || ""}`,
-    `- 未達の原因: ${entry.missedReason || ""}`,
+    `- 達成数（/3）: ${formatValue(item.achievedCount)}`,
+    `- 進んだ理由: ${item.achievedReason || ""}`,
+    `- 詰まった原因: ${item.missedReason || ""}`,
     "",
-    "■ KPI入力",
-    `- 業務標準化件数: ${formatValue(entry.standardizationCount)}`,
-    `- 家族時間: ${formatValue(entry.familyHours, "h/週")}`,
-    `- 睡眠平均: ${formatValue(entry.sleepAvg, "h/日")}`,
-    `- 体重: ${formatValue(entry.weight, "kg")}`,
-    `- 資産確認: ${entry.assetCheck || "-"}`,
-    `- 英語学習日数: ${formatValue(entry.englishDays, "日/週")}`,
+    "■ 日次KPI",
+    `- 業務標準化件数: ${formatValue(item.standardizationCount)}`,
+    `- 家族時間: ${formatValue(item.familyMinutes, "分/日")}`,
+    `- 睡眠: ${formatValue(item.sleepHours, "h/日")}`,
+    `- 体重: ${formatValue(item.weight, "kg")}`,
+    `- 資産確認: ${item.assetCheck || "-"}`,
+    `- 英語学習: ${item.englishDone || "-"}`,
     "",
-    "■ 週の採点（100点満点）",
-    `- 仕事: ${formatValue(entry.scoreWork)}`,
-    `- 生活: ${formatValue(entry.scoreLife)}`,
-    `- 継続力: ${formatValue(entry.scoreConsistency)}`,
-    `- 総合点: ${formatValue(entry.scoreTotal)}`,
+    "■ 今日の採点（100点満点）",
+    `- 仕事: ${formatValue(item.scoreWork)}`,
+    `- 生活: ${formatValue(item.scoreLife)}`,
+    `- 継続力: ${formatValue(item.scoreConsistency)}`,
+    `- 総合点: ${formatValue(item.scoreTotal)}`,
     "",
     "■ 振り返り",
     `- 良かったこと:\n${goodLines}`,
-    `- 改善1つ: ${entry.improvement || ""}`,
-    `- 来週の布石（5分でできること）: ${entry.seedAction || ""}`
+    `- 改善1つ: ${item.improvement || ""}`,
+    `- 明日の布石（5分でできること）: ${item.seedAction || ""}`
   ].join("\n");
 }
 
 function getLatestEntry() {
   if (!entries.length) return null;
-  return [...entries].sort((a, b) => (a.weekStart > b.weekStart ? -1 : 1))[0];
+  return [...entries].sort((a, b) => (a.entryDate > b.entryDate ? -1 : 1))[0];
 }
 
 async function copyToClipboard(text) {
@@ -487,19 +495,20 @@ function handleRecordActions(event) {
   const id = target.dataset.id;
   if (!action || !id) return;
 
-  const targetEntry = entries.find((entry) => entry.id === id);
-  if (!targetEntry) return;
+  const item = getEntryById(id);
+  if (!item) return;
 
   if (action === "edit") {
-    fillForm(targetEntry);
-    promptPreview.textContent = buildWeeklyPrompt(targetEntry);
+    fillForm(item);
+    promptPreview.textContent = buildDailyPrompt(item);
     window.scrollTo({ top: 0, behavior: "smooth" });
     showToast("編集モードに切り替えました。");
+    return;
   }
 
   if (action === "delete") {
-    const approved = window.confirm("このレビューを削除しますか？");
-    if (!approved) return;
+    const ok = window.confirm("この日次レビューを削除しますか？");
+    if (!ok) return;
     entries = entries.filter((entry) => entry.id !== id);
     saveEntries();
     if (editingId === id) resetForm();
@@ -509,28 +518,28 @@ function handleRecordActions(event) {
 }
 
 function fillSampleData() {
-  ensureDefaultWeekRange();
+  ensureDefaultDate();
   form.task1.value = "理事会議事録テンプレを更新";
   form.task2.value = "入学式進行表v2を確定";
   form.task3.value = "来賓対応FAQを整備";
   form.achievedCount.value = "2";
-  form.achievedReason.value = "先に会議資料を固定したため、判断が速かった";
-  form.missedReason.value = "緊急対応で1案件が後ろ倒し";
-  form.standardizationCount.value = "2";
-  form.familyHours.value = "8";
-  form.sleepAvg.value = "6.4";
+  form.achievedReason.value = "朝の優先順位を先に固定できた";
+  form.missedReason.value = "緊急対応で1件が後ろ倒し";
+  form.standardizationCount.value = "1";
+  form.familyMinutes.value = "80";
+  form.sleepHours.value = "6.4";
   form.weight.value = "72.4";
   form.assetCheck.value = "実施";
-  form.englishDays.value = "5";
+  form.englishDone.value = "実施";
   form.scoreWork.value = "84";
   form.scoreLife.value = "78";
   form.scoreConsistency.value = "81";
   form.scoreTotal.value = "81";
-  form.good1.value = "定型文の再利用率が上がった";
-  form.good2.value = "会議準備の前倒しができた";
-  form.good3.value = "夜の振り返りを4日継続できた";
-  form.improvement.value = "水曜の中間レビューを固定化する";
-  form.seedAction.value = "月曜会議のアジェンダ下書きを5分で作る";
+  form.good1.value = "会議準備を前倒しできた";
+  form.good2.value = "定型文の再利用が進んだ";
+  form.good3.value = "夜の振り返りを継続できた";
+  form.improvement.value = "昼に5分の中間レビューを固定";
+  form.seedAction.value = "明日のアジェンダ草案を5分で作る";
   showToast("サンプルを入力しました。");
 }
 
@@ -545,7 +554,7 @@ function exportAsJson() {
   const a = document.createElement("a");
   const today = toISODate(new Date());
   a.href = url;
-  a.download = `life-os-weekly-reviews-${today}.json`;
+  a.download = `life-os-daily-reviews-${today}.json`;
   a.click();
   URL.revokeObjectURL(url);
   showToast("JSONをエクスポートしました。");
@@ -588,16 +597,16 @@ function bindEvents() {
   fillSampleButton.addEventListener("click", fillSampleData);
   exportButton.addEventListener("click", exportAsJson);
 
-  copyWeeklyPromptButton.addEventListener("click", async () => {
-    const target = editingId ? entries.find((entry) => entry.id === editingId) : getLatestEntry();
+  copyDailyPromptButton.addEventListener("click", async () => {
+    const target = editingId ? getEntryById(editingId) : getLatestEntry();
     if (!target) {
-      showToast("コピー対象の週次レビューがありません。");
+      showToast("コピー対象の日次レビューがありません。");
       return;
     }
-    const prompt = buildWeeklyPrompt(target);
+    const prompt = buildDailyPrompt(target);
     promptPreview.textContent = prompt;
     const copied = await copyToClipboard(prompt);
-    showToast(copied ? "週次分析プロンプトをコピーしました。" : "コピーに失敗しました。");
+    showToast(copied ? "日次分析プロンプトをコピーしました。" : "コピーに失敗しました。");
   });
 
   copyMonthlyPromptButton.addEventListener("click", async () => {
@@ -613,8 +622,9 @@ function bindEvents() {
 
 function init() {
   loadEntries();
+  sortEntries();
+  ensureDefaultDate();
   setDefaultMonthIfEmpty();
-  ensureDefaultWeekRange();
   bindEvents();
   registerServiceWorker();
   renderAll();
