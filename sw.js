@@ -1,7 +1,7 @@
 /* global self, caches, fetch */
 "use strict";
 
-const CACHE_NAME = "life-os-v3";
+const CACHE_NAME = "life-os-v4";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -36,11 +36,33 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+self.addEventListener("message", (event) => {
+  if (!event.data || event.data.type !== "SKIP_WAITING") return;
+  self.skipWaiting();
+});
+
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
+
+  const isDocumentRequest = req.mode === "navigate" || req.destination === "document";
+  if (isDocumentRequest) {
+    // Always try to get the latest HTML first to avoid stale UI after deploy.
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          if (res && res.status === 200 && res.type === "basic") {
+            const copy = res.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
+          }
+          return res;
+        })
+        .catch(() => caches.match(req).then((cached) => cached || caches.match("./index.html")))
+    );
+    return;
+  }
 
   event.respondWith(
     caches.match(req).then((cached) => {
