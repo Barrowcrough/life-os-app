@@ -244,6 +244,19 @@ textarea:focus {
   gap: 10px;
 }
 
+.inline-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.inline-check input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+}
+
 .btn {
   border: 0;
   border-radius: 999px;
@@ -329,6 +342,10 @@ th {
 .small {
   color: var(--ink-sub);
   margin-top: 0;
+}
+
+#syncStatus {
+  margin-top: 12px;
 }
 
 .prompt-preview {

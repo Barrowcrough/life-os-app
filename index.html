@@ -28,12 +28,44 @@
       <p class="eyebrow">Life Operating System</p>
       <h1>人生OS 日次レビュー</h1>
       <p class="subtitle">毎日1回の入力で、週次の進捗と月次サマリーを自動で作るアプリです。</p>
-      <p class="small">build 2026.02.28.2</p>
+      <p class="small">build 2026.03.01.1</p>
     </header>
 
     <section class="dashboard card">
       <h2>今週ダッシュボード</h2>
       <div id="dashboardCards" class="card-grid"></div>
+    </section>
+
+    <section class="card">
+      <h2>クラウド同期（全端末共通）</h2>
+      <p class="small">GitHub Gistに保存します。各端末で同じ `PAT` と `Gist ID` を設定してください。</p>
+
+      <div class="grid two">
+        <label>
+          GitHub PAT（`gist` 権限）
+          <input id="syncToken" type="password" autocomplete="off" placeholder="github_pat_...">
+        </label>
+        <label>
+          Gist ID
+          <input id="syncGistId" type="text" autocomplete="off" placeholder="例: a1b2c3...">
+        </label>
+      </div>
+
+      <div class="actions">
+        <label class="inline-check">
+          <input id="syncAutoPush" type="checkbox">
+          保存時に自動でクラウドへ反映
+        </label>
+      </div>
+
+      <div class="actions">
+        <button id="saveSyncSettingsButton" class="btn btn-ghost" type="button">設定を保存</button>
+        <button id="createGistButton" class="btn btn-ghost" type="button">新規Gist作成</button>
+        <button id="pullCloudButton" class="btn btn-ghost" type="button">クラウドから取得</button>
+        <button id="pushCloudButton" class="btn btn-ghost" type="button">クラウドへ保存</button>
+        <button id="clearSyncSettingsButton" class="btn btn-ghost" type="button">同期設定クリア</button>
+      </div>
+      <p id="syncStatus" class="small">同期設定が未保存です。</p>
     </section>
 
     <section class="card">

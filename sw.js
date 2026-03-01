@@ -1,7 +1,7 @@
 /* global self, caches, fetch */
 "use strict";
 
-const CACHE_NAME = "life-os-v4";
+const CACHE_NAME = "life-os-v5";
 const APP_SHELL = [
   "./",
   "./index.html",

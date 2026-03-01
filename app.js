@@ -1,6 +1,10 @@
 "use strict";
 
 const STORAGE_KEY = "life_os_daily_reviews_v1";
+const SYNC_SETTINGS_KEY = "life_os_sync_settings_v1";
+const DEVICE_ID_KEY = "life_os_device_id_v1";
+const CLOUD_FILE_NAME = "life-os-data.json";
+
 const GOALS = {
   standardizationPerWeek: 2,
   englishDaysPerWeek: 5,
@@ -23,6 +27,16 @@ const resetFormButton = document.getElementById("resetFormButton");
 const copyDailyPromptButton = document.getElementById("copyDailyPromptButton");
 const copyMonthlyPromptButton = document.getElementById("copyMonthlyPromptButton");
 const exportButton = document.getElementById("exportButton");
+
+const syncTokenInput = document.getElementById("syncToken");
+const syncGistIdInput = document.getElementById("syncGistId");
+const syncAutoPushInput = document.getElementById("syncAutoPush");
+const saveSyncSettingsButton = document.getElementById("saveSyncSettingsButton");
+const createGistButton = document.getElementById("createGistButton");
+const pullCloudButton = document.getElementById("pullCloudButton");
+const pushCloudButton = document.getElementById("pushCloudButton");
+const clearSyncSettingsButton = document.getElementById("clearSyncSettingsButton");
+const syncStatus = document.getElementById("syncStatus");
 
 const TEXT_FIELDS = [
   "task1",
@@ -52,6 +66,15 @@ const NUMBER_FIELDS = [
 let entries = [];
 let editingId = null;
 let latestSummaryText = "";
+let isSyncBusy = false;
+let autoSyncTimer = null;
+let deviceId = "";
+let syncSettings = {
+  token: "",
+  gistId: "",
+  autoPush: false,
+  lastSyncAt: ""
+};
 
 function pad2(num) {
   return String(num).padStart(2, "0");
@@ -59,12 +82,6 @@ function pad2(num) {
 
 function toISODate(date) {
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
-}
-
-function fromISODate(isoDate) {
-  const [y, m, d] = (isoDate || "").split("-").map(Number);
-  if (!y || !m || !d) return null;
-  return new Date(y, m - 1, d);
 }
 
 function addDays(date, days) {
@@ -112,10 +129,59 @@ function showToast(message) {
   }, 1800);
 }
 
+function formatDateTime(isoText) {
+  if (!isoText) return "-";
+  const d = new Date(isoText);
+  if (Number.isNaN(d.getTime())) return "-";
+  return d.toLocaleString("ja-JP", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function normalizeEntry(raw, idx) {
+  if (!raw || typeof raw !== "object") return null;
+  const item = { ...raw };
+
+  if (typeof item.entryDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(item.entryDate)) return null;
+  if (!item.id || typeof item.id !== "string") item.id = `${item.entryDate}-${idx + 1}`;
+  if (!item.createdAt || typeof item.createdAt !== "string") item.createdAt = new Date().toISOString();
+  if (!item.updatedAt || typeof item.updatedAt !== "string") item.updatedAt = item.createdAt;
+
+  for (const key of TEXT_FIELDS) {
+    item[key] = typeof item[key] === "string" ? item[key] : "";
+  }
+  for (const key of NUMBER_FIELDS) {
+    item[key] = parseNumber(item[key]);
+  }
+
+  item.assetCheck = typeof item.assetCheck === "string" ? item.assetCheck : "";
+  item.englishDone = typeof item.englishDone === "string" ? item.englishDone : "";
+
+  return item;
+}
+
+function normalizeEntries(rawEntries) {
+  if (!Array.isArray(rawEntries)) return [];
+  return rawEntries
+    .map((item, idx) => normalizeEntry(item, idx))
+    .filter((item) => Boolean(item));
+}
+
+function sortEntries() {
+  entries.sort((a, b) => {
+    if (a.entryDate === b.entryDate) return a.id.localeCompare(b.id);
+    return a.entryDate < b.entryDate ? -1 : 1;
+  });
+}
+
 function loadEntries() {
   try {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-    entries = Array.isArray(parsed) ? parsed : [];
+    entries = normalizeEntries(parsed);
   } catch (_err) {
     entries = [];
   }
@@ -183,15 +249,303 @@ function fillForm(item) {
   }
 }
 
-function sortEntries() {
-  entries.sort((a, b) => {
-    if (a.entryDate === b.entryDate) return a.id.localeCompare(b.id);
-    return a.entryDate < b.entryDate ? -1 : 1;
-  });
-}
-
 function getEntryById(id) {
   return entries.find((item) => item.id === id) || null;
+}
+
+function entryUpdatedAtMs(item) {
+  const ts = Date.parse(item.updatedAt || item.createdAt || "");
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+function mergeEntries(localItems, remoteItems) {
+  const merged = new Map();
+  const mergedOrder = [...localItems, ...remoteItems];
+
+  for (const item of mergedOrder) {
+    const key = item.entryDate || item.id;
+    if (!key) continue;
+    const current = merged.get(key);
+    if (!current) {
+      merged.set(key, item);
+      continue;
+    }
+    if (entryUpdatedAtMs(item) >= entryUpdatedAtMs(current)) {
+      merged.set(key, item);
+    }
+  }
+
+  return Array.from(merged.values());
+}
+
+function hasSyncCredentials() {
+  return Boolean(syncSettings.token && syncSettings.gistId);
+}
+
+function persistSyncSettings() {
+  localStorage.setItem(SYNC_SETTINGS_KEY, JSON.stringify(syncSettings));
+}
+
+function loadSyncSettings() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SYNC_SETTINGS_KEY) || "{}");
+    syncSettings = {
+      token: typeof parsed.token === "string" ? parsed.token : "",
+      gistId: typeof parsed.gistId === "string" ? parsed.gistId : "",
+      autoPush: Boolean(parsed.autoPush),
+      lastSyncAt: typeof parsed.lastSyncAt === "string" ? parsed.lastSyncAt : ""
+    };
+  } catch (_err) {
+    syncSettings = {
+      token: "",
+      gistId: "",
+      autoPush: false,
+      lastSyncAt: ""
+    };
+  }
+
+  syncTokenInput.value = syncSettings.token;
+  syncGistIdInput.value = syncSettings.gistId;
+  syncAutoPushInput.checked = syncSettings.autoPush;
+  updateSyncStatus("同期設定を読み込みました。");
+}
+
+function updateSyncStatus(message) {
+  const lines = [message];
+  lines.push(`最終同期: ${formatDateTime(syncSettings.lastSyncAt)}`);
+  lines.push(`自動同期: ${syncSettings.autoPush ? "ON" : "OFF"}`);
+  syncStatus.textContent = lines.join(" / ");
+}
+
+function setSyncBusy(busy, message = "") {
+  isSyncBusy = busy;
+  const targets = [
+    saveSyncSettingsButton,
+    createGistButton,
+    pullCloudButton,
+    pushCloudButton,
+    clearSyncSettingsButton
+  ];
+  for (const el of targets) {
+    if (el) el.disabled = busy;
+  }
+  if (message) updateSyncStatus(message);
+}
+
+function getCloudPayload(entriesForCloud) {
+  return {
+    schemaVersion: 1,
+    app: "life-os-daily-review",
+    updatedAt: new Date().toISOString(),
+    updatedBy: deviceId,
+    entries: entriesForCloud
+  };
+}
+
+async function githubApi(path, token, init = {}) {
+  const headers = {
+    Accept: "application/vnd.github+json",
+    Authorization: `Bearer ${token}`,
+    "X-GitHub-Api-Version": "2022-11-28",
+    ...(init.headers || {})
+  };
+
+  const response = await fetch(`https://api.github.com${path}`, {
+    ...init,
+    headers
+  });
+
+  const isJson = (response.headers.get("content-type") || "").includes("application/json");
+  const data = isJson ? await response.json().catch(() => null) : await response.text();
+
+  if (!response.ok) {
+    const detail = isJson && data && data.message ? data.message : `HTTP ${response.status}`;
+    throw new Error(detail);
+  }
+
+  return data;
+}
+
+async function getGistFileContent(file, token) {
+  if (typeof file.content === "string" && !file.truncated) return file.content;
+  if (!file.raw_url) throw new Error("Gistファイル内容を取得できません。");
+
+  const response = await fetch(file.raw_url, {
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+  if (!response.ok) throw new Error("Gistファイルのraw取得に失敗しました。");
+  return response.text();
+}
+
+async function extractRemoteEntriesFromGist(gistData, token) {
+  const files = gistData.files || {};
+  let targetFile = files[CLOUD_FILE_NAME];
+
+  if (!targetFile) {
+    targetFile = Object.values(files).find((file) => file && typeof file.filename === "string" && file.filename.endsWith(".json"));
+  }
+  if (!targetFile) throw new Error("GistにJSONデータファイルが見つかりません。");
+
+  const contentText = await getGistFileContent(targetFile, token);
+  const payload = JSON.parse(contentText);
+  const rawEntries = Array.isArray(payload) ? payload : payload.entries;
+  const normalized = normalizeEntries(rawEntries);
+  return normalized;
+}
+
+async function pushToCloud(options = {}) {
+  const { silent = false } = options;
+  if (!hasSyncCredentials()) {
+    if (!silent) showToast("同期設定（PAT / Gist ID）を保存してください。");
+    updateSyncStatus("同期設定が不足しています。");
+    return;
+  }
+  if (isSyncBusy) return;
+
+  setSyncBusy(true, "クラウドへ保存中...");
+  try {
+    const payloadText = JSON.stringify(getCloudPayload(entries), null, 2);
+    await githubApi(`/gists/${syncSettings.gistId}`, syncSettings.token, {
+      method: "PATCH",
+      body: JSON.stringify({
+        description: "人生OS 日次レビュー データ",
+        files: {
+          [CLOUD_FILE_NAME]: {
+            content: payloadText
+          }
+        }
+      })
+    });
+
+    syncSettings.lastSyncAt = new Date().toISOString();
+    persistSyncSettings();
+    updateSyncStatus("クラウドへ保存しました。");
+    if (!silent) showToast("クラウドへ保存しました。");
+  } catch (err) {
+    const msg = `クラウド保存失敗: ${err.message}`;
+    updateSyncStatus(msg);
+    if (!silent) showToast("クラウド保存に失敗しました。");
+    throw err;
+  } finally {
+    setSyncBusy(false);
+  }
+}
+
+async function pullFromCloud(options = {}) {
+  const { silent = false } = options;
+  if (!hasSyncCredentials()) {
+    if (!silent) showToast("同期設定（PAT / Gist ID）を保存してください。");
+    updateSyncStatus("同期設定が不足しています。");
+    return;
+  }
+  if (isSyncBusy) return;
+
+  setSyncBusy(true, "クラウドから取得中...");
+  try {
+    const gist = await githubApi(`/gists/${syncSettings.gistId}`, syncSettings.token);
+    const remoteEntries = await extractRemoteEntriesFromGist(gist, syncSettings.token);
+
+    const beforeCount = entries.length;
+    entries = mergeEntries(entries, remoteEntries);
+    sortEntries();
+    saveEntries();
+    renderAll();
+
+    syncSettings.lastSyncAt = new Date().toISOString();
+    persistSyncSettings();
+    updateSyncStatus(`クラウドから取得しました（ローカル ${beforeCount}件 -> ${entries.length}件）。`);
+    if (!silent) showToast("クラウドから同期しました。");
+  } catch (err) {
+    const msg = `クラウド取得失敗: ${err.message}`;
+    updateSyncStatus(msg);
+    if (!silent) showToast("クラウド取得に失敗しました。");
+    throw err;
+  } finally {
+    setSyncBusy(false);
+  }
+}
+
+async function createPrivateGist() {
+  const token = (syncTokenInput.value || "").trim();
+  if (!token) {
+    showToast("先にPATを入力してください。");
+    updateSyncStatus("PATが未入力です。");
+    return;
+  }
+  if (isSyncBusy) return;
+
+  setSyncBusy(true, "新規Gist作成中...");
+  try {
+    const payloadText = JSON.stringify(getCloudPayload(entries), null, 2);
+    const created = await githubApi("/gists", token, {
+      method: "POST",
+      body: JSON.stringify({
+        description: "人生OS 日次レビュー データ",
+        public: false,
+        files: {
+          [CLOUD_FILE_NAME]: {
+            content: payloadText
+          }
+        }
+      })
+    });
+
+    syncSettings.token = token;
+    syncSettings.gistId = created.id || "";
+    syncSettings.autoPush = syncAutoPushInput.checked;
+    syncSettings.lastSyncAt = new Date().toISOString();
+    persistSyncSettings();
+    syncGistIdInput.value = syncSettings.gistId;
+    updateSyncStatus(`新規Gistを作成しました（${syncSettings.gistId}）。`);
+    showToast("新規Gistを作成しました。");
+  } catch (err) {
+    updateSyncStatus(`Gist作成失敗: ${err.message}`);
+    showToast("Gist作成に失敗しました。");
+  } finally {
+    setSyncBusy(false);
+  }
+}
+
+function scheduleAutoPush() {
+  if (!syncSettings.autoPush || !hasSyncCredentials()) return;
+  if (autoSyncTimer) window.clearTimeout(autoSyncTimer);
+  autoSyncTimer = window.setTimeout(() => {
+    pushToCloud({ silent: true }).catch((err) => {
+      console.error(err);
+      updateSyncStatus(`自動同期エラー: ${err.message}`);
+    });
+  }, 600);
+}
+
+function saveSyncSettingsFromForm() {
+  syncSettings = {
+    token: (syncTokenInput.value || "").trim(),
+    gistId: (syncGistIdInput.value || "").trim(),
+    autoPush: Boolean(syncAutoPushInput.checked),
+    lastSyncAt: syncSettings.lastSyncAt || ""
+  };
+  persistSyncSettings();
+  updateSyncStatus("同期設定を保存しました。");
+  showToast("同期設定を保存しました。");
+}
+
+function clearSyncSettings() {
+  const ok = window.confirm("同期設定をクリアしますか？（ローカル保存データは削除されません）");
+  if (!ok) return;
+  syncSettings = {
+    token: "",
+    gistId: "",
+    autoPush: false,
+    lastSyncAt: ""
+  };
+  persistSyncSettings();
+  syncTokenInput.value = "";
+  syncGistIdInput.value = "";
+  syncAutoPushInput.checked = false;
+  updateSyncStatus("同期設定をクリアしました。");
+  showToast("同期設定をクリアしました。");
 }
 
 function handleSubmit(event) {
@@ -223,6 +577,7 @@ function handleSubmit(event) {
   saveEntries();
   resetForm(false);
   renderAll();
+  scheduleAutoPush();
 }
 
 function renderRecords() {
@@ -264,10 +619,7 @@ function getMonthRange(monthValue) {
 
 function getEntriesInMonth(monthValue) {
   return entries
-    .filter((item) => {
-      if (!item.entryDate) return false;
-      return item.entryDate.startsWith(monthValue);
-    })
+    .filter((item) => item.entryDate && item.entryDate.startsWith(monthValue))
     .sort((a, b) => (a.entryDate < b.entryDate ? -1 : 1));
 }
 
@@ -513,6 +865,7 @@ function handleRecordActions(event) {
     saveEntries();
     if (editingId === id) resetForm();
     renderAll();
+    scheduleAutoPush();
     showToast("削除しました。");
   }
 }
@@ -644,13 +997,44 @@ function bindEvents() {
     const copied = await copyToClipboard(latestSummaryText);
     showToast(copied ? "月末分析プロンプトをコピーしました。" : "コピーに失敗しました。");
   });
+
+  saveSyncSettingsButton.addEventListener("click", saveSyncSettingsFromForm);
+  clearSyncSettingsButton.addEventListener("click", clearSyncSettings);
+
+  createGistButton.addEventListener("click", () => {
+    createPrivateGist().catch((err) => {
+      console.error(err);
+    });
+  });
+
+  pullCloudButton.addEventListener("click", () => {
+    pullFromCloud().catch((err) => {
+      console.error(err);
+    });
+  });
+
+  pushCloudButton.addEventListener("click", () => {
+    pushToCloud().catch((err) => {
+      console.error(err);
+    });
+  });
+}
+
+function loadOrCreateDeviceId() {
+  const existing = localStorage.getItem(DEVICE_ID_KEY);
+  if (existing) return existing;
+  const created = `device-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  localStorage.setItem(DEVICE_ID_KEY, created);
+  return created;
 }
 
 function init() {
+  deviceId = loadOrCreateDeviceId();
   loadEntries();
   sortEntries();
   ensureDefaultDate();
   setDefaultMonthIfEmpty();
+  loadSyncSettings();
   bindEvents();
   registerServiceWorker();
   renderAll();
