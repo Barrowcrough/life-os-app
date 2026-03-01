@@ -348,6 +348,10 @@ th {
   margin-top: 12px;
 }
 
+#brokerSessionInfo {
+  margin-top: 8px;
+}
+
 .prompt-preview {
   margin-top: 12px;
   border: 1px solid #d7e1e6;

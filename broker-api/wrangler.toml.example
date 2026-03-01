@@ -1,0 +1,15 @@
+name = "life-os-broker"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+# Comma-separated list. Example:
+# ALLOWED_ORIGINS = "https://barrowcrough.github.io,https://your-custom-domain.example"
+ALLOWED_ORIGINS = "https://barrowcrough.github.io"
+SESSION_TTL_SEC = "1800"
+GIST_FILE_NAME = "life-os-data.json"
+
+# Set as secret values (do not put in this file):
+# wrangler secret put GITHUB_PAT
+# wrangler secret put BROKER_PASSPHRASE
+# wrangler secret put SESSION_SIGNING_SECRET

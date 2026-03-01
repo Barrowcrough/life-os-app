@@ -28,7 +28,7 @@
       <p class="eyebrow">Life Operating System</p>
       <h1>人生OS 日次レビュー</h1>
       <p class="subtitle">毎日1回の入力で、週次の進捗と月次サマリーを自動で作るアプリです。</p>
-      <p class="small">build 2026.03.01.1</p>
+      <p class="small">build 2026.03.01.2</p>
     </header>
 
     <section class="dashboard card">
@@ -38,16 +38,37 @@
 
     <section class="card">
       <h2>クラウド同期（全端末共通）</h2>
-      <p class="small">GitHub Gistに保存します。各端末で同じ `PAT` と `Gist ID` を設定してください。</p>
+      <p class="small">推奨は「短命トークン（中継API）」です。PATをアプリ端末へ置かずに同期できます。</p>
 
       <div class="grid two">
         <label>
-          GitHub PAT（`gist` 権限）
-          <input id="syncToken" type="password" autocomplete="off" placeholder="github_pat_...">
+          同期モード
+          <select id="syncMode">
+            <option value="broker">短命トークン（中継API・推奨）</option>
+            <option value="direct">直接PAT（既存方式）</option>
+          </select>
         </label>
         <label>
           Gist ID
           <input id="syncGistId" type="text" autocomplete="off" placeholder="例: a1b2c3...">
+        </label>
+      </div>
+
+      <div id="brokerSettings" class="grid two">
+        <label>
+          中継API URL
+          <input id="brokerBaseUrl" type="url" autocomplete="off" placeholder="https://life-os-broker.example.workers.dev">
+        </label>
+        <label>
+          中継API パスフレーズ
+          <input id="brokerPassphrase" type="password" autocomplete="off" placeholder="端末に保存されません">
+        </label>
+      </div>
+
+      <div id="directSettings" class="grid one" hidden>
+        <label>
+          GitHub PAT（`gist` 権限）
+          <input id="syncToken" type="password" autocomplete="off" placeholder="github_pat_...">
         </label>
       </div>
 
@@ -60,11 +81,13 @@
 
       <div class="actions">
         <button id="saveSyncSettingsButton" class="btn btn-ghost" type="button">設定を保存</button>
+        <button id="issueSessionButton" class="btn btn-ghost" type="button">短命トークン発行</button>
         <button id="createGistButton" class="btn btn-ghost" type="button">新規Gist作成</button>
         <button id="pullCloudButton" class="btn btn-ghost" type="button">クラウドから取得</button>
         <button id="pushCloudButton" class="btn btn-ghost" type="button">クラウドへ保存</button>
         <button id="clearSyncSettingsButton" class="btn btn-ghost" type="button">同期設定クリア</button>
       </div>
+      <p id="brokerSessionInfo" class="small">短命トークン: 未発行</p>
       <p id="syncStatus" class="small">同期設定が未保存です。</p>
     </section>
 

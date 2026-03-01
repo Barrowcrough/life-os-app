@@ -1,7 +1,8 @@
 "use strict";
 
 const STORAGE_KEY = "life_os_daily_reviews_v1";
-const SYNC_SETTINGS_KEY = "life_os_sync_settings_v1";
+const SYNC_SETTINGS_KEY = "life_os_sync_settings_v2";
+const BROKER_SESSION_KEY = "life_os_broker_session_v1";
 const DEVICE_ID_KEY = "life_os_device_id_v1";
 const CLOUD_FILE_NAME = "life-os-data.json";
 
@@ -28,10 +29,18 @@ const copyDailyPromptButton = document.getElementById("copyDailyPromptButton");
 const copyMonthlyPromptButton = document.getElementById("copyMonthlyPromptButton");
 const exportButton = document.getElementById("exportButton");
 
+const syncModeInput = document.getElementById("syncMode");
 const syncTokenInput = document.getElementById("syncToken");
 const syncGistIdInput = document.getElementById("syncGistId");
 const syncAutoPushInput = document.getElementById("syncAutoPush");
+const brokerBaseUrlInput = document.getElementById("brokerBaseUrl");
+const brokerPassphraseInput = document.getElementById("brokerPassphrase");
+const brokerSettingsWrap = document.getElementById("brokerSettings");
+const directSettingsWrap = document.getElementById("directSettings");
+const brokerSessionInfo = document.getElementById("brokerSessionInfo");
+
 const saveSyncSettingsButton = document.getElementById("saveSyncSettingsButton");
+const issueSessionButton = document.getElementById("issueSessionButton");
 const createGistButton = document.getElementById("createGistButton");
 const pullCloudButton = document.getElementById("pullCloudButton");
 const pushCloudButton = document.getElementById("pushCloudButton");
@@ -69,11 +78,19 @@ let latestSummaryText = "";
 let isSyncBusy = false;
 let autoSyncTimer = null;
 let deviceId = "";
+
 let syncSettings = {
+  mode: "broker",
   token: "",
   gistId: "",
   autoPush: false,
+  brokerBaseUrl: "",
   lastSyncAt: ""
+};
+
+let brokerSession = {
+  accessToken: "",
+  expiresAt: ""
 };
 
 function pad2(num) {
@@ -278,40 +295,126 @@ function mergeEntries(localItems, remoteItems) {
   return Array.from(merged.values());
 }
 
-function hasSyncCredentials() {
+function isBrokerMode() {
+  return syncSettings.mode !== "direct";
+}
+
+function normalizeBaseUrl(urlText) {
+  const text = (urlText || "").trim();
+  if (!text) return "";
+  return text.replace(/\/+$/, "");
+}
+
+function hasDirectCredentials() {
   return Boolean(syncSettings.token && syncSettings.gistId);
+}
+
+function isBrokerSessionValid() {
+  if (!brokerSession.accessToken || !brokerSession.expiresAt) return false;
+  const expMs = Date.parse(brokerSession.expiresAt);
+  if (!Number.isFinite(expMs)) return false;
+  return expMs - Date.now() > 30 * 1000;
+}
+
+function hasBrokerCredentials() {
+  return Boolean(syncSettings.brokerBaseUrl && syncSettings.gistId && isBrokerSessionValid());
+}
+
+function hasSyncCredentials() {
+  return isBrokerMode() ? hasBrokerCredentials() : hasDirectCredentials();
 }
 
 function persistSyncSettings() {
   localStorage.setItem(SYNC_SETTINGS_KEY, JSON.stringify(syncSettings));
 }
 
+function persistBrokerSession() {
+  if (brokerSession.accessToken) {
+    sessionStorage.setItem(BROKER_SESSION_KEY, JSON.stringify(brokerSession));
+  } else {
+    sessionStorage.removeItem(BROKER_SESSION_KEY);
+  }
+}
+
+function loadBrokerSession() {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(BROKER_SESSION_KEY) || "{}");
+    brokerSession = {
+      accessToken: typeof parsed.accessToken === "string" ? parsed.accessToken : "",
+      expiresAt: typeof parsed.expiresAt === "string" ? parsed.expiresAt : ""
+    };
+  } catch (_err) {
+    brokerSession = {
+      accessToken: "",
+      expiresAt: ""
+    };
+  }
+}
+
+function clearBrokerSession() {
+  brokerSession = {
+    accessToken: "",
+    expiresAt: ""
+  };
+  persistBrokerSession();
+}
+
 function loadSyncSettings() {
   try {
     const parsed = JSON.parse(localStorage.getItem(SYNC_SETTINGS_KEY) || "{}");
     syncSettings = {
+      mode: parsed.mode === "direct" ? "direct" : "broker",
       token: typeof parsed.token === "string" ? parsed.token : "",
       gistId: typeof parsed.gistId === "string" ? parsed.gistId : "",
       autoPush: Boolean(parsed.autoPush),
+      brokerBaseUrl: normalizeBaseUrl(typeof parsed.brokerBaseUrl === "string" ? parsed.brokerBaseUrl : ""),
       lastSyncAt: typeof parsed.lastSyncAt === "string" ? parsed.lastSyncAt : ""
     };
   } catch (_err) {
     syncSettings = {
+      mode: "broker",
       token: "",
       gistId: "",
       autoPush: false,
+      brokerBaseUrl: "",
       lastSyncAt: ""
     };
   }
 
+  syncModeInput.value = syncSettings.mode;
   syncTokenInput.value = syncSettings.token;
   syncGistIdInput.value = syncSettings.gistId;
   syncAutoPushInput.checked = syncSettings.autoPush;
+  brokerBaseUrlInput.value = syncSettings.brokerBaseUrl;
+  updateSyncModeUI();
+  updateBrokerSessionInfo();
   updateSyncStatus("同期設定を読み込みました。");
 }
 
+function updateSyncModeUI() {
+  const broker = isBrokerMode();
+  brokerSettingsWrap.hidden = !broker;
+  directSettingsWrap.hidden = broker;
+  issueSessionButton.hidden = !broker;
+}
+
+function updateBrokerSessionInfo() {
+  if (!isBrokerMode()) {
+    brokerSessionInfo.textContent = "短命トークン: 直接PATモードでは未使用";
+    return;
+  }
+  if (!brokerSession.accessToken || !brokerSession.expiresAt) {
+    brokerSessionInfo.textContent = "短命トークン: 未発行";
+    return;
+  }
+  const valid = isBrokerSessionValid();
+  brokerSessionInfo.textContent = `短命トークン: ${valid ? "有効" : "期限切れ"} / 失効時刻 ${formatDateTime(brokerSession.expiresAt)}`;
+}
+
 function updateSyncStatus(message) {
+  const modeLabel = isBrokerMode() ? "短命トークン（中継API）" : "直接PAT";
   const lines = [message];
+  lines.push(`モード: ${modeLabel}`);
   lines.push(`最終同期: ${formatDateTime(syncSettings.lastSyncAt)}`);
   lines.push(`自動同期: ${syncSettings.autoPush ? "ON" : "OFF"}`);
   syncStatus.textContent = lines.join(" / ");
@@ -321,6 +424,7 @@ function setSyncBusy(busy, message = "") {
   isSyncBusy = busy;
   const targets = [
     saveSyncSettingsButton,
+    issueSessionButton,
     createGistButton,
     pullCloudButton,
     pushCloudButton,
@@ -340,6 +444,12 @@ function getCloudPayload(entriesForCloud) {
     updatedBy: deviceId,
     entries: entriesForCloud
   };
+}
+
+function entriesFromCloudPayload(payload) {
+  if (Array.isArray(payload)) return normalizeEntries(payload);
+  if (payload && Array.isArray(payload.entries)) return normalizeEntries(payload.entries);
+  return [];
 }
 
 async function githubApi(path, token, init = {}) {
@@ -390,44 +500,191 @@ async function extractRemoteEntriesFromGist(gistData, token) {
 
   const contentText = await getGistFileContent(targetFile, token);
   const payload = JSON.parse(contentText);
-  const rawEntries = Array.isArray(payload) ? payload : payload.entries;
-  const normalized = normalizeEntries(rawEntries);
-  return normalized;
+  return entriesFromCloudPayload(payload);
 }
 
-async function pushToCloud(options = {}) {
-  const { silent = false } = options;
-  if (!hasSyncCredentials()) {
-    if (!silent) showToast("同期設定（PAT / Gist ID）を保存してください。");
-    updateSyncStatus("同期設定が不足しています。");
+async function brokerApi(path, options = {}) {
+  const { method = "POST", body = null, withAuth = true } = options;
+  const base = normalizeBaseUrl(syncSettings.brokerBaseUrl);
+  if (!base) throw new Error("中継API URLが未設定です。");
+
+  const headers = {
+    "Content-Type": "application/json"
+  };
+  if (withAuth) {
+    if (!isBrokerSessionValid()) throw new Error("短命トークンが期限切れです。再発行してください。");
+    headers.Authorization = `Bearer ${brokerSession.accessToken}`;
+  }
+
+  const response = await fetch(`${base}${path}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined
+  });
+
+  const isJson = (response.headers.get("content-type") || "").includes("application/json");
+  const data = isJson ? await response.json().catch(() => null) : await response.text();
+
+  if (!response.ok) {
+    const message = isJson && data && data.message ? data.message : `HTTP ${response.status}`;
+    throw new Error(message);
+  }
+  return data;
+}
+
+async function issueBrokerSession() {
+  if (!isBrokerMode()) return;
+  const baseUrl = normalizeBaseUrl(brokerBaseUrlInput.value || syncSettings.brokerBaseUrl);
+  const passphrase = (brokerPassphraseInput.value || "").trim();
+  if (!baseUrl) {
+    showToast("中継API URLを入力してください。");
+    updateSyncStatus("中継API URLが未入力です。");
+    return;
+  }
+  if (!passphrase) {
+    showToast("中継APIパスフレーズを入力してください。");
+    updateSyncStatus("中継APIパスフレーズが未入力です。");
     return;
   }
   if (isSyncBusy) return;
 
+  syncSettings.brokerBaseUrl = baseUrl;
+  persistSyncSettings();
+
+  setSyncBusy(true, "短命トークン発行中...");
+  try {
+    const data = await brokerApi("/v1/session", {
+      withAuth: false,
+      body: {
+        passphrase
+      }
+    });
+    brokerSession = {
+      accessToken: typeof data.accessToken === "string" ? data.accessToken : "",
+      expiresAt: typeof data.expiresAt === "string" ? data.expiresAt : ""
+    };
+    if (!brokerSession.accessToken) throw new Error("短命トークンの受け取りに失敗しました。");
+    persistBrokerSession();
+    updateBrokerSessionInfo();
+    updateSyncStatus("短命トークンを発行しました。");
+    showToast("短命トークンを発行しました。");
+  } catch (err) {
+    clearBrokerSession();
+    updateBrokerSessionInfo();
+    updateSyncStatus(`短命トークン発行失敗: ${err.message}`);
+    showToast("短命トークン発行に失敗しました。");
+  } finally {
+    setSyncBusy(false);
+  }
+}
+
+async function createGistWithDirectPat() {
+  const payloadText = JSON.stringify(getCloudPayload(entries), null, 2);
+  const created = await githubApi("/gists", syncSettings.token, {
+    method: "POST",
+    body: JSON.stringify({
+      description: "人生OS 日次レビュー データ",
+      public: false,
+      files: {
+        [CLOUD_FILE_NAME]: {
+          content: payloadText
+        }
+      }
+    })
+  });
+  return created.id || "";
+}
+
+async function createGistWithBroker() {
+  const data = await brokerApi("/v1/gist/create", {
+    body: {
+      description: "人生OS 日次レビュー データ",
+      payload: getCloudPayload(entries)
+    }
+  });
+  return typeof data.gistId === "string" ? data.gistId : "";
+}
+
+async function createCloudGist() {
+  if (isSyncBusy) return;
+  setSyncBusy(true, "新規Gist作成中...");
+  try {
+    let gistId = "";
+    if (isBrokerMode()) {
+      if (!syncSettings.brokerBaseUrl) throw new Error("中継API URLを保存してください。");
+      gistId = await createGistWithBroker();
+    } else {
+      if (!syncSettings.token) throw new Error("PATを保存してください。");
+      gistId = await createGistWithDirectPat();
+    }
+    if (!gistId) throw new Error("Gist IDを取得できませんでした。");
+
+    syncSettings.gistId = gistId;
+    syncGistIdInput.value = gistId;
+    syncSettings.lastSyncAt = new Date().toISOString();
+    persistSyncSettings();
+    updateSyncStatus(`新規Gistを作成しました（${gistId}）。`);
+    showToast("新規Gistを作成しました。");
+  } catch (err) {
+    updateSyncStatus(`Gist作成失敗: ${err.message}`);
+    showToast("Gist作成に失敗しました。");
+  } finally {
+    setSyncBusy(false);
+  }
+}
+
+async function pushToCloud(options = {}) {
+  const { silent = false } = options;
+  if (isSyncBusy) return;
+
+  if (isBrokerMode()) {
+    if (!syncSettings.brokerBaseUrl || !syncSettings.gistId) {
+      if (!silent) showToast("中継API URLとGist IDを保存してください。");
+      updateSyncStatus("同期設定が不足しています。");
+      return;
+    }
+    if (!isBrokerSessionValid()) {
+      if (!silent) showToast("短命トークンを再発行してください。");
+      updateSyncStatus("短命トークンが無効です。");
+      return;
+    }
+  } else if (!hasDirectCredentials()) {
+    if (!silent) showToast("PATとGist IDを保存してください。");
+    updateSyncStatus("同期設定が不足しています。");
+    return;
+  }
+
   setSyncBusy(true, "クラウドへ保存中...");
   try {
-    const payloadText = JSON.stringify(getCloudPayload(entries), null, 2);
-    await githubApi(`/gists/${syncSettings.gistId}`, syncSettings.token, {
-      method: "PATCH",
-      body: JSON.stringify({
-        description: "人生OS 日次レビュー データ",
-        files: {
-          [CLOUD_FILE_NAME]: {
-            content: payloadText
-          }
+    const payload = getCloudPayload(entries);
+    if (isBrokerMode()) {
+      await brokerApi("/v1/gist/push", {
+        body: {
+          gistId: syncSettings.gistId,
+          payload
         }
-      })
-    });
+      });
+    } else {
+      await githubApi(`/gists/${syncSettings.gistId}`, syncSettings.token, {
+        method: "PATCH",
+        body: JSON.stringify({
+          description: "人生OS 日次レビュー データ",
+          files: {
+            [CLOUD_FILE_NAME]: {
+              content: JSON.stringify(payload, null, 2)
+            }
+          }
+        })
+      });
+    }
 
     syncSettings.lastSyncAt = new Date().toISOString();
     persistSyncSettings();
     updateSyncStatus("クラウドへ保存しました。");
     if (!silent) showToast("クラウドへ保存しました。");
   } catch (err) {
-    const msg = `クラウド保存失敗: ${err.message}`;
-    updateSyncStatus(msg);
+    updateSyncStatus(`クラウド保存失敗: ${err.message}`);
     if (!silent) showToast("クラウド保存に失敗しました。");
-    throw err;
   } finally {
     setSyncBusy(false);
   }
@@ -435,17 +692,39 @@ async function pushToCloud(options = {}) {
 
 async function pullFromCloud(options = {}) {
   const { silent = false } = options;
-  if (!hasSyncCredentials()) {
-    if (!silent) showToast("同期設定（PAT / Gist ID）を保存してください。");
+  if (isSyncBusy) return;
+
+  if (isBrokerMode()) {
+    if (!syncSettings.brokerBaseUrl || !syncSettings.gistId) {
+      if (!silent) showToast("中継API URLとGist IDを保存してください。");
+      updateSyncStatus("同期設定が不足しています。");
+      return;
+    }
+    if (!isBrokerSessionValid()) {
+      if (!silent) showToast("短命トークンを再発行してください。");
+      updateSyncStatus("短命トークンが無効です。");
+      return;
+    }
+  } else if (!hasDirectCredentials()) {
+    if (!silent) showToast("PATとGist IDを保存してください。");
     updateSyncStatus("同期設定が不足しています。");
     return;
   }
-  if (isSyncBusy) return;
 
   setSyncBusy(true, "クラウドから取得中...");
   try {
-    const gist = await githubApi(`/gists/${syncSettings.gistId}`, syncSettings.token);
-    const remoteEntries = await extractRemoteEntriesFromGist(gist, syncSettings.token);
+    let remoteEntries = [];
+    if (isBrokerMode()) {
+      const data = await brokerApi("/v1/gist/pull", {
+        body: {
+          gistId: syncSettings.gistId
+        }
+      });
+      remoteEntries = entriesFromCloudPayload(data.payload || data);
+    } else {
+      const gist = await githubApi(`/gists/${syncSettings.gistId}`, syncSettings.token);
+      remoteEntries = await extractRemoteEntriesFromGist(gist, syncSettings.token);
+    }
 
     const beforeCount = entries.length;
     entries = mergeEntries(entries, remoteEntries);
@@ -458,75 +737,34 @@ async function pullFromCloud(options = {}) {
     updateSyncStatus(`クラウドから取得しました（ローカル ${beforeCount}件 -> ${entries.length}件）。`);
     if (!silent) showToast("クラウドから同期しました。");
   } catch (err) {
-    const msg = `クラウド取得失敗: ${err.message}`;
-    updateSyncStatus(msg);
+    updateSyncStatus(`クラウド取得失敗: ${err.message}`);
     if (!silent) showToast("クラウド取得に失敗しました。");
-    throw err;
-  } finally {
-    setSyncBusy(false);
-  }
-}
-
-async function createPrivateGist() {
-  const token = (syncTokenInput.value || "").trim();
-  if (!token) {
-    showToast("先にPATを入力してください。");
-    updateSyncStatus("PATが未入力です。");
-    return;
-  }
-  if (isSyncBusy) return;
-
-  setSyncBusy(true, "新規Gist作成中...");
-  try {
-    const payloadText = JSON.stringify(getCloudPayload(entries), null, 2);
-    const created = await githubApi("/gists", token, {
-      method: "POST",
-      body: JSON.stringify({
-        description: "人生OS 日次レビュー データ",
-        public: false,
-        files: {
-          [CLOUD_FILE_NAME]: {
-            content: payloadText
-          }
-        }
-      })
-    });
-
-    syncSettings.token = token;
-    syncSettings.gistId = created.id || "";
-    syncSettings.autoPush = syncAutoPushInput.checked;
-    syncSettings.lastSyncAt = new Date().toISOString();
-    persistSyncSettings();
-    syncGistIdInput.value = syncSettings.gistId;
-    updateSyncStatus(`新規Gistを作成しました（${syncSettings.gistId}）。`);
-    showToast("新規Gistを作成しました。");
-  } catch (err) {
-    updateSyncStatus(`Gist作成失敗: ${err.message}`);
-    showToast("Gist作成に失敗しました。");
   } finally {
     setSyncBusy(false);
   }
 }
 
 function scheduleAutoPush() {
-  if (!syncSettings.autoPush || !hasSyncCredentials()) return;
+  if (!syncSettings.autoPush) return;
   if (autoSyncTimer) window.clearTimeout(autoSyncTimer);
   autoSyncTimer = window.setTimeout(() => {
     pushToCloud({ silent: true }).catch((err) => {
       console.error(err);
       updateSyncStatus(`自動同期エラー: ${err.message}`);
     });
-  }, 600);
+  }, 800);
 }
 
 function saveSyncSettingsFromForm() {
-  syncSettings = {
-    token: (syncTokenInput.value || "").trim(),
-    gistId: (syncGistIdInput.value || "").trim(),
-    autoPush: Boolean(syncAutoPushInput.checked),
-    lastSyncAt: syncSettings.lastSyncAt || ""
-  };
+  syncSettings.mode = syncModeInput.value === "direct" ? "direct" : "broker";
+  syncSettings.token = (syncTokenInput.value || "").trim();
+  syncSettings.gistId = (syncGistIdInput.value || "").trim();
+  syncSettings.autoPush = Boolean(syncAutoPushInput.checked);
+  syncSettings.brokerBaseUrl = normalizeBaseUrl(brokerBaseUrlInput.value);
   persistSyncSettings();
+
+  updateSyncModeUI();
+  updateBrokerSessionInfo();
   updateSyncStatus("同期設定を保存しました。");
   showToast("同期設定を保存しました。");
 }
@@ -534,16 +772,27 @@ function saveSyncSettingsFromForm() {
 function clearSyncSettings() {
   const ok = window.confirm("同期設定をクリアしますか？（ローカル保存データは削除されません）");
   if (!ok) return;
+
   syncSettings = {
+    mode: "broker",
     token: "",
     gistId: "",
     autoPush: false,
+    brokerBaseUrl: "",
     lastSyncAt: ""
   };
+  clearBrokerSession();
   persistSyncSettings();
+
+  syncModeInput.value = "broker";
   syncTokenInput.value = "";
   syncGistIdInput.value = "";
   syncAutoPushInput.checked = false;
+  brokerBaseUrlInput.value = "";
+  brokerPassphraseInput.value = "";
+
+  updateSyncModeUI();
+  updateBrokerSessionInfo();
   updateSyncStatus("同期設定をクリアしました。");
   showToast("同期設定をクリアしました。");
 }
@@ -998,11 +1247,24 @@ function bindEvents() {
     showToast(copied ? "月末分析プロンプトをコピーしました。" : "コピーに失敗しました。");
   });
 
+  syncModeInput.addEventListener("change", () => {
+    syncSettings.mode = syncModeInput.value === "direct" ? "direct" : "broker";
+    updateSyncModeUI();
+    updateBrokerSessionInfo();
+    updateSyncStatus("同期モードを変更しました。設定を保存してください。");
+  });
+
   saveSyncSettingsButton.addEventListener("click", saveSyncSettingsFromForm);
   clearSyncSettingsButton.addEventListener("click", clearSyncSettings);
 
+  issueSessionButton.addEventListener("click", () => {
+    issueBrokerSession().catch((err) => {
+      console.error(err);
+    });
+  });
+
   createGistButton.addEventListener("click", () => {
-    createPrivateGist().catch((err) => {
+    createCloudGist().catch((err) => {
       console.error(err);
     });
   });
@@ -1030,6 +1292,7 @@ function loadOrCreateDeviceId() {
 
 function init() {
   deviceId = loadOrCreateDeviceId();
+  loadBrokerSession();
   loadEntries();
   sortEntries();
   ensureDefaultDate();
